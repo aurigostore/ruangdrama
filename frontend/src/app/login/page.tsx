@@ -191,9 +191,9 @@ export default function LoginPage() {
           </div>
           {/* Poster stack (desktop only) */}
           <div className="lp-hero-deco" aria-hidden>
-            <div className="lp-poster lp-poster--3" />
-            <div className="lp-poster lp-poster--2" />
-            <div className="lp-poster lp-poster--1">
+            <div className="lp-poster lp-poster--3" style={heroBgs[2] ? { backgroundImage: `url(${heroBgs[2]})`, backgroundSize: "cover", backgroundPosition: "center" } : {}} />
+            <div className="lp-poster lp-poster--2" style={heroBgs[1] ? { backgroundImage: `url(${heroBgs[1]})`, backgroundSize: "cover", backgroundPosition: "center" } : {}} />
+            <div className="lp-poster lp-poster--1" style={heroBgs[0] ? { backgroundImage: `url(${heroBgs[0]})`, backgroundSize: "cover", backgroundPosition: "center" } : {}}>
               <div className="lp-poster-badge">▶ Sedang Trending</div>
               <div className="lp-poster-overlay">
                 <div className="lp-poster-title">Drama Terbaru</div>

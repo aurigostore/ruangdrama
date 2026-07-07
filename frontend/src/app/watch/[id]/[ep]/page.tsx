@@ -95,28 +95,66 @@ export default function WatchPage({ params }: Props) {
 
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
 
+    // Helper: play dengan fallback muted untuk mobile autoplay policy
+    const tryPlay = () => {
+      const p = video.play();
+      if (p !== undefined) {
+        p.catch(() => {
+          // Autoplay diblokir browser — coba muted dulu
+          video.muted = true;
+          video.play().catch(() => {});
+        });
+      }
+    };
+
     const isHLS = url.includes(".m3u8");
     if (!isHLS) {
       video.src = url;
       video.load();
-      video.play().catch(() => {});
+      tryPlay();
       return;
     }
 
+    // iOS Safari — native HLS support
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = url;
-      video.play().catch(() => {});
+      video.load();
+      tryPlay();
       return;
     }
 
+    // Android / Desktop — pakai HLS.js
     import("hls.js").then(({ default: Hls }) => {
-      if (!Hls.isSupported()) { setError("Browser tidak mendukung HLS"); return; }
-      const hls = new Hls({ enableWorker: true });
+      if (!Hls.isSupported()) {
+        setError("Browser tidak mendukung pemutaran video HLS. Coba Chrome versi terbaru.");
+        return;
+      }
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        xhrSetup: (xhr: XMLHttpRequest) => {
+          xhr.withCredentials = false;
+        },
+      });
       hls.loadSource(url);
       hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(() => {}); });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        tryPlay();
+      });
       hls.on(Hls.Events.ERROR, (_: any, data: any) => {
-        if (data.fatal) { setError("Gagal memuat video stream"); hls.destroy(); }
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad(); // retry network error
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              setError("Gagal memuat video stream. Coba refresh halaman.");
+              hls.destroy();
+          }
+        }
       });
       hlsRef.current = hls;
     });
