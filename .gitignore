@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+dist/
+
+# Environment files (JANGAN diupload ke git!)
+.env
+.env.local
+.env.production
+.env*.local
+
+# Database (data produksi — jangan di-commit)
+data/
+*.db
+*.db-journal
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# PM2
+.pm2/
+
+# Next.js
+next-env.d.ts
