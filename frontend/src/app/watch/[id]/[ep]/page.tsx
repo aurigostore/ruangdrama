@@ -48,6 +48,7 @@ export default function WatchPage({ params }: Props) {
     return saved === null ? true : saved === "true";
   });
   const [countdown, setCountdown] = useState<number | null>(null);
+  const wasFullscreenRef = useRef<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<any>(null);
@@ -63,6 +64,26 @@ export default function WatchPage({ params }: Props) {
       setEp(parseInt(paramEp));
     });
   }, [params]);
+
+  // Fungsi navigasi episode kustom (soft transition) untuk mempertahankan fullscreen
+  const navigateToEpisode = useCallback((nextEpNum: number) => {
+    window.history.pushState(null, "", `/watch/${id}/${nextEpNum}`);
+    setEp(nextEpNum);
+  }, [id]);
+
+  // Sinkronisasi state 'ep' saat navigasi back/forward browser ditekan
+  useEffect(() => {
+    const handlePopState = () => {
+      const pathParts = window.location.pathname.split("/");
+      const epPart = pathParts[pathParts.length - 1];
+      if (epPart) {
+        const parsedEp = parseInt(epPart);
+        if (!isNaN(parsedEp)) setEp(parsedEp);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   // ── Fetch stream + detail ──────────────────────────────
   useEffect(() => {
@@ -182,20 +203,21 @@ export default function WatchPage({ params }: Props) {
       const nextEpNum = detail && ep < detail.totalEpisodes ? ep + 1 : null;
       if (!autoPlay || !nextEpNum) return;
 
-      // Mulai countdown 5 detik
-      setCountdown(5);
-      let sisa = 5;
+      // Mulai countdown 1.5 detik (2 tick × 750ms)
+      setCountdown(2);
+      let sisa = 2;
       countdownRef.current = setInterval(() => {
         sisa -= 1;
         if (sisa <= 0) {
           clearInterval(countdownRef.current!);
           countdownRef.current = null;
           setCountdown(null);
-          routerAutoPlay.push(`/watch/${id}/${nextEpNum}`);
+          // Gunakan soft transition agar fullscreen tidak lepas
+          navigateToEpisode(nextEpNum);
         } else {
           setCountdown(sisa);
         }
-      }, 1000);
+      }, 750);
     };
 
     video.addEventListener("ended", onEnded);
@@ -203,7 +225,7 @@ export default function WatchPage({ params }: Props) {
       video.removeEventListener("ended", onEnded);
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
-  }, [id, ep, detail, autoPlay, routerAutoPlay]);
+  }, [id, ep, detail, autoPlay, navigateToEpisode]);
 
   function cancelAutoPlay() {
     if (countdownRef.current) clearInterval(countdownRef.current);
@@ -220,7 +242,10 @@ export default function WatchPage({ params }: Props) {
 
   // ── Fullscreen listener ───────────────────────────────
   useEffect(() => {
-    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const onFsChange = () => {
+      const fsEl = document.fullscreenElement;
+      setIsFullscreen(!!fsEl);
+    };
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
@@ -331,8 +356,8 @@ export default function WatchPage({ params }: Props) {
       </div>
 
       {/* Player */}
-      <div className="player-outer" ref={playerWrapRef}>
-        <div className="player-wrap">
+      <div className="player-outer">
+        <div className="player-wrap" ref={playerWrapRef}>
           {loading && (
             <div className="player-error">
               <div style={{ width: 40, height: 40, border: "3px solid var(--accent)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
@@ -376,6 +401,79 @@ export default function WatchPage({ params }: Props) {
                 <button className="autoplay-cancel" onClick={cancelAutoPlay}>Batal</button>
               </div>
             </div>
+          )}
+
+
+
+          {/* Floating Enter/Exit Fullscreen Buttons */}
+          {!isFullscreen ? (
+            <button
+              onClick={() => {
+                playerWrapRef.current?.requestFullscreen().catch(() => {});
+              }}
+              style={{
+                position: "absolute",
+                top: 12,
+                right: 12,
+                zIndex: 15,
+                background: "rgba(0, 0, 0, 0.6)",
+                color: "#fff",
+                border: "1px solid rgba(255, 255, 255, 0.15)",
+                borderRadius: "50%",
+                width: 38,
+                height: 38,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                boxShadow: "0 2px 6px rgba(0,0,0,0.4)",
+                transition: "background 0.2s, transform 0.1s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0, 0, 0, 0.8)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(0, 0, 0, 0.6)")}
+              onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.95)")}
+              onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+              aria-label="Masuk Fullscreen"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (document.fullscreenElement) {
+                  document.exitFullscreen().catch(() => {});
+                }
+              }}
+              style={{
+                position: "absolute",
+                top: 16,
+                right: 16,
+                zIndex: 35,
+                background: "rgba(0, 0, 0, 0.65)",
+                color: "#fff",
+                border: "1px solid rgba(255, 255, 255, 0.25)",
+                borderRadius: "50%",
+                width: 42,
+                height: 42,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+                transition: "background 0.2s, transform 0.1s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0, 0, 0, 0.85)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(0, 0, 0, 0.65)")}
+              onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.95)")}
+              onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+              aria-label="Keluar Fullscreen"
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7" />
+              </svg>
+            </button>
           )}
         </div>
 
@@ -436,17 +534,25 @@ export default function WatchPage({ params }: Props) {
       {/* Nav Episode */}
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16, gap: 12 }}>
         {prevEp ? (
-          <Link href={`/watch/${id}/${prevEp}`} className="btn btn-secondary" style={{ flex: 1, justifyContent: "center" }}>
+          <button 
+            onClick={() => navigateToEpisode(prevEp)} 
+            className="btn btn-secondary" 
+            style={{ flex: 1, justifyContent: "center", cursor: "pointer" }}
+          >
             ← Episode {prevEp}
-          </Link>
+          </button>
         ) : <div style={{ flex: 1 }} />}
         <Link href={`/drama/${id}`} className="btn btn-secondary" style={{ flexShrink: 0 }}>
           Daftar Episode
         </Link>
         {nextEp ? (
-          <Link href={`/watch/${id}/${nextEp}`} className="btn btn-primary" style={{ flex: 1, justifyContent: "center" }}>
+          <button 
+            onClick={() => navigateToEpisode(nextEp)} 
+            className="btn btn-primary" 
+            style={{ flex: 1, justifyContent: "center", cursor: "pointer" }}
+          >
             Episode {nextEp} →
-          </Link>
+          </button>
         ) : <div style={{ flex: 1 }} />}
       </div>
 
@@ -478,13 +584,14 @@ export default function WatchPage({ params }: Props) {
                   <span className="ep-lock">🔒</span>
                 </div>
               ) : (
-                <Link
+                <button
                   key={e.number}
-                  href={`/watch/${id}/${e.number}`}
+                  onClick={() => navigateToEpisode(e.number)}
                   className={`ep-btn${e.number === ep ? " active" : ""}`}
+                  style={{ cursor: "pointer" }}
                 >
                   {e.number}
-                </Link>
+                </button>
               )
             )}
           </div>

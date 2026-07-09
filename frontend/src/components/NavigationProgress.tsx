@@ -1,8 +1,8 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { usePathname } from "next/navigation";
 
-export default function NavigationProgress() {
+function NavigationProgressInner() {
   const pathname = usePathname();
   const [progress, setProgress] = useState(0);
   const [visible, setVisible] = useState(false);
@@ -79,5 +79,13 @@ export default function NavigationProgress() {
         }}
       />
     </div>
+  );
+}
+
+export default function NavigationProgress() {
+  return (
+    <Suspense fallback={null}>
+      <NavigationProgressInner />
+    </Suspense>
   );
 }

@@ -12,22 +12,86 @@ mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const db = new Database(DB_PATH);
 
-// Inisialisasi tabel
+// ── Migrasi & Inisialisasi Tabel ──────────────────────────
+// Cek schema tabel keys saat ini
+const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='keys'").get();
+
+if (tableExists) {
+  const cols = db.pragma("table_info(keys)").map((c) => c.name);
+  const hasDurationDays = cols.includes("duration_days");
+  const hasDurationHours = cols.includes("duration_hours");
+
+  if (hasDurationDays && !hasDurationHours) {
+    // Kasus 1: tabel lama (hanya duration_days) → tambah duration_hours
+    db.exec(`ALTER TABLE keys ADD COLUMN duration_hours INTEGER NOT NULL DEFAULT 24`);
+    db.exec(`UPDATE keys SET duration_hours = duration_days * 24`);
+  }
+
+  if (hasDurationDays && hasDurationHours) {
+    // Kasus 2: tabel hybrid (kedua kolom ada) → rekonstruksi untuk hapus duration_days
+    // SQLite tidak support DROP COLUMN NOT NULL, jadi pakai rename + recreate
+    db.exec(`
+      ALTER TABLE keys RENAME TO keys_old;
+
+      CREATE TABLE keys (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        key            TEXT    UNIQUE NOT NULL,
+        duration_hours INTEGER NOT NULL DEFAULT 24,
+        created_at     TEXT NOT NULL,
+        expires_at     TEXT NOT NULL,
+        is_active      INTEGER NOT NULL DEFAULT 1,
+        note           TEXT DEFAULT ''
+      );
+
+      INSERT INTO keys (id, key, duration_hours, created_at, expires_at, is_active, note)
+        SELECT id, key, duration_hours, created_at, expires_at, is_active, note FROM keys_old;
+
+      DROP TABLE keys_old;
+    `);
+  }
+}
+
+// Buat tabel jika belum ada (fresh install)
 db.exec(`
   CREATE TABLE IF NOT EXISTS keys (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    key       TEXT    UNIQUE NOT NULL,
-    duration_days INTEGER NOT NULL,
-    created_at    TEXT NOT NULL,
-    expires_at    TEXT NOT NULL,
-    is_active     INTEGER NOT NULL DEFAULT 1,
-    note          TEXT DEFAULT ''
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    key            TEXT    UNIQUE NOT NULL,
+    duration_hours INTEGER NOT NULL DEFAULT 24,
+    created_at     TEXT NOT NULL,
+    expires_at     TEXT NOT NULL,
+    is_active      INTEGER NOT NULL DEFAULT 1,
+    note           TEXT DEFAULT ''
+  );
+
+  CREATE TABLE IF NOT EXISTS key_usage_logs (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    key     TEXT NOT NULL,
+    used_at TEXT NOT NULL,
+    ip      TEXT DEFAULT ''
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    is_active  INTEGER NOT NULL DEFAULT 1
+  );
+
+  CREATE TABLE IF NOT EXISTS counters (
+    name  TEXT PRIMARY KEY,
+    value INTEGER NOT NULL DEFAULT 0
   );
 `);
 
-// Generate key format: RD-XXXXXXXXXXXX (12 karakter random A-Z0-9)
+
+// Pastikan counter rows ada
+db.prepare("INSERT OR IGNORE INTO counters (name, value) VALUES (?, 0)").run("visitors");
+db.prepare("INSERT OR IGNORE INTO counters (name, value) VALUES (?, 0)").run("logins");
+
+// ── Generate key format: RD-XXXXXXXXXXXX ─────────────────
 function generateKey() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // hindari 0/O, 1/I yang mirip
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let result = "RD-";
   const bytes = randomBytes(12);
   for (let i = 0; i < 12; i++) {
@@ -36,17 +100,18 @@ function generateKey() {
   return result;
 }
 
-export function createKey(durationDays, note = "") {
+// ── Keys CRUD ─────────────────────────────────────────────
+export function createKey(durationHours, note = "") {
   const key = generateKey();
   const now = new Date();
-  const expires = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+  const expires = new Date(now.getTime() + durationHours * 60 * 60 * 1000);
 
   db.prepare(`
-    INSERT INTO keys (key, duration_days, created_at, expires_at, note)
+    INSERT INTO keys (key, duration_hours, created_at, expires_at, note)
     VALUES (?, ?, ?, ?, ?)
-  `).run(key, durationDays, now.toISOString(), expires.toISOString(), note);
+  `).run(key, durationHours, now.toISOString(), expires.toISOString(), note);
 
-  return { key, expiresAt: expires.toISOString(), durationDays };
+  return { key, expiresAt: expires.toISOString(), durationHours };
 }
 
 export function validateKey(keyStr) {
@@ -67,13 +132,22 @@ export function validateKey(keyStr) {
     createdAt: row.created_at,
     daysLeft,
     hoursLeft,
-    durationDays: row.duration_days,
+    durationHours: row.duration_hours,
     note: row.note || "",
   };
 }
 
 export function getAllKeys() {
-  return db.prepare("SELECT * FROM keys ORDER BY created_at DESC").all();
+  const keys = db.prepare("SELECT * FROM keys ORDER BY created_at DESC").all();
+  // Tambahkan login_count dan last_used_at dari logs
+  return keys.map((k) => {
+    const logs = db.prepare("SELECT COUNT(*) as cnt, MAX(used_at) as last FROM key_usage_logs WHERE key = ?").get(k.key);
+    return {
+      ...k,
+      login_count: logs.cnt || 0,
+      last_used_at: logs.last || null,
+    };
+  });
 }
 
 export function deactivateKey(keyStr) {
@@ -81,25 +155,21 @@ export function deactivateKey(keyStr) {
   return info.changes > 0;
 }
 
-// Perpanjang masa aktif key
-export function extendKey(keyStr, additionalDays) {
+export function extendKey(keyStr, additionalHours) {
   const row = db.prepare("SELECT * FROM keys WHERE key = ?").get(keyStr);
   if (!row) return { success: false, reason: "Key tidak ditemukan" };
 
-  // Kalau sudah expired, perpanjang dari sekarang; kalau masih aktif, dari expires_at
   const base = new Date(row.expires_at) > new Date() ? new Date(row.expires_at) : new Date();
-  const newExpires = new Date(base.getTime() + additionalDays * 24 * 60 * 60 * 1000);
+  const newExpires = new Date(base.getTime() + additionalHours * 60 * 60 * 1000);
 
-  db.prepare("UPDATE keys SET expires_at = ?, is_active = 1, duration_days = duration_days + ? WHERE key = ?")
-    .run(newExpires.toISOString(), additionalDays, keyStr);
+  db.prepare("UPDATE keys SET expires_at = ?, is_active = 1, duration_hours = duration_hours + ? WHERE key = ?")
+    .run(newExpires.toISOString(), additionalHours, keyStr);
 
   return { success: true, newExpiresAt: newExpires.toISOString() };
 }
 
-// Buat key dengan nama custom (misal: JUMATBERKAH)
-export function createCustomKey(customKey, durationDays, note = "") {
+export function createCustomKey(customKey, durationHours, note = "") {
   const key = customKey.trim().toUpperCase();
-  // Validasi: hanya huruf kapital, angka, dan strip
   if (!/^[A-Z0-9\-]{3,20}$/.test(key)) {
     return { success: false, reason: "Key hanya boleh huruf A-Z, angka, dan strip (-). 3-20 karakter." };
   }
@@ -107,10 +177,70 @@ export function createCustomKey(customKey, durationDays, note = "") {
   if (existing) return { success: false, reason: "Key sudah digunakan" };
 
   const now = new Date();
-  const expires = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
-  db.prepare(`INSERT INTO keys (key, duration_days, created_at, expires_at, note) VALUES (?, ?, ?, ?, ?)`)
-    .run(key, durationDays, now.toISOString(), expires.toISOString(), note);
+  const expires = new Date(now.getTime() + durationHours * 60 * 60 * 1000);
+
+  db.prepare(`INSERT INTO keys (key, duration_hours, created_at, expires_at, note) VALUES (?, ?, ?, ?, ?)`)
+    .run(key, durationHours, now.toISOString(), expires.toISOString(), note);
 
   return { success: true, key, expiresAt: expires.toISOString() };
 }
 
+// ── Key Usage Logs ─────────────────────────────────────────
+export function logKeyUsage(keyStr, ip = "") {
+  db.prepare("INSERT INTO key_usage_logs (key, used_at, ip) VALUES (?, ?, ?)")
+    .run(keyStr, new Date().toISOString(), ip || "");
+}
+
+export function getKeyUsageLogs(keyStr) {
+  return db.prepare("SELECT * FROM key_usage_logs WHERE key = ? ORDER BY used_at DESC").all(keyStr);
+}
+
+// ── Notifications ──────────────────────────────────────────
+export function createNotification(title, body) {
+  db.prepare("INSERT INTO notifications (title, body, created_at) VALUES (?, ?, ?)")
+    .run(title, body, new Date().toISOString());
+  return { success: true };
+}
+
+export function getActiveNotifications() {
+  return db.prepare("SELECT * FROM notifications WHERE is_active = 1 ORDER BY created_at DESC").all();
+}
+
+export function getAllNotifications() {
+  return db.prepare("SELECT * FROM notifications ORDER BY created_at DESC").all();
+}
+
+export function deleteNotification(id) {
+  const info = db.prepare("DELETE FROM notifications WHERE id = ?").run(id);
+  return info.changes > 0;
+}
+
+export function toggleNotification(id) {
+  const row = db.prepare("SELECT is_active FROM notifications WHERE id = ?").get(id);
+  if (!row) return false;
+  db.prepare("UPDATE notifications SET is_active = ? WHERE id = ?").run(row.is_active ? 0 : 1, id);
+  return true;
+}
+
+// ── Counters ───────────────────────────────────────────────
+export function incrementCounter(name) {
+  db.prepare("UPDATE counters SET value = value + 1 WHERE name = ?").run(name);
+}
+
+export function getCounters() {
+  const rows = db.prepare("SELECT * FROM counters").all();
+  const result = {};
+  for (const r of rows) result[r.name] = r.value;
+  return result;
+}
+
+export function getActiveVipCount() {
+  const row = db.prepare("SELECT COUNT(*) as count FROM keys WHERE is_active = 1 AND expires_at > ?").get(new Date().toISOString());
+  return row ? row.count : 0;
+}
+
+export function getOnlineWatchersCount() {
+  const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const row = db.prepare("SELECT COUNT(DISTINCT key) as count FROM key_usage_logs WHERE used_at > ?").get(fifteenMinsAgo);
+  return row ? row.count : 0;
+}

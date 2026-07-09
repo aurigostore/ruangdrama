@@ -3,19 +3,18 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-
-// Halaman yang tidak perlu auth
 const PUBLIC_PATHS = ["/login", "/admin"];
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [checking, setChecking] = useState(true);
+  const [mounted, setMounted] = useState(false);
   const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+
     if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
-      setChecking(false);
       setAuthorized(true);
       return;
     }
@@ -48,7 +47,6 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       .then((json) => {
         if (json.valid) {
           if (json.expiresAt) localStorage.setItem("rd_expires", json.expiresAt);
-          // Simpan info lengkap untuk profil VIP
           localStorage.setItem("rd_info", JSON.stringify({
             note: json.note || "",
             createdAt: json.createdAt || "",
@@ -64,11 +62,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
           router.replace("/login");
         }
       })
-      .catch(() => { setAuthorized(true); })
-      .finally(() => { setChecking(false); });
+      .catch(() => setAuthorized(true));
   }, [pathname, router]);
 
-  if (checking) {
+  // Sebelum mount (SSR): render null — server & client sama-sama null, tidak ada mismatch
+  if (!mounted) return null;
+
+  // Setelah mount, auth belum selesai: tampilkan spinner
+  if (!authorized) {
     return (
       <div style={{
         position: "fixed", inset: 0,
@@ -86,8 +87,6 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-
-  if (!authorized) return null;
 
   return <>{children}</>;
 }

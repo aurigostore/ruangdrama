@@ -7,6 +7,12 @@ import type { Drama } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
 interface PageInfo {
   has_more: boolean;
   pageNo: number;
@@ -21,7 +27,6 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
-
   const stateRef = useRef({ loading: false, pageInfo: null as PageInfo | null, done: false });
 
   async function load(pi: PageInfo | null) {
@@ -75,6 +80,15 @@ export default function HomePage() {
 
   useEffect(() => { load(null); }, []);
 
+  // ── Visitor counter trigger ────────────────────────────────
+  useEffect(() => {
+    // Throttle: hanya sekali per browser session
+    if (!sessionStorage.getItem("rd_visited")) {
+      sessionStorage.setItem("rd_visited", "1");
+      fetch(`${API}/api/stats/visitor`, { method: "POST" }).catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     const handler = () => {
       const scrollY = window.scrollY + window.innerHeight;
@@ -91,6 +105,7 @@ export default function HomePage() {
     <main className="container" style={{ paddingTop: 24, paddingBottom: 80 }}>
 
       <HeroBanner />
+
 
       <ContinueWatching />
 

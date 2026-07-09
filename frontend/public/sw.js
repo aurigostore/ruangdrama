@@ -1,14 +1,14 @@
-const CACHE_NAME = "ruang-drama-v1";
+// Ganti versi ini setiap kali deploy besar agar SW lama di-invalidate
+const CACHE_NAME = "ruang-drama-v2";
 
-// Aset yang dicache saat install
+// Hanya pre-cache aset yang benar-benar statis (bukan JS chunks)
 const STATIC_ASSETS = [
-  "/",
   "/manifest.json",
   "/logo.png",
   "/favicon.ico",
 ];
 
-// Install — pre-cache aset statis
+// Install — pre-cache aset statis saja
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
@@ -18,7 +18,7 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
-// Activate — hapus cache lama
+// Activate — hapus semua cache versi lama
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -30,19 +30,43 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Fetch — network-first untuk API, cache-first untuk aset statis
+// Fetch strategy:
+// - API / external: bypass (tidak di-cache)
+// - _next/static/ JS chunks: NETWORK-FIRST (selalu ambil versi terbaru)
+// - Navigasi halaman: network-first dengan fallback
+// - Aset statis (logo, icons, manifest): cache-first
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
-  // Jangan cache API / stream request
+  // 1. Bypass: API calls & request ke domain lain
   if (
     url.pathname.startsWith("/api/") ||
     url.hostname !== self.location.hostname
   ) {
-    return; // biarkan network biasa
+    return;
   }
 
-  // Untuk navigasi halaman: network-first
+  // 2. Next.js JS/CSS chunks — selalu network-first agar update langsung terasa
+  if (url.pathname.startsWith("/_next/")) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          // Jika berhasil, update cache dan return
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => {
+          // Offline fallback: gunakan cache jika ada
+          return caches.match(event.request);
+        })
+    );
+    return;
+  }
+
+  // 3. Navigasi halaman — network-first
   if (event.request.mode === "navigate") {
     event.respondWith(
       fetch(event.request).catch(() =>
@@ -52,7 +76,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Untuk aset statis: cache-first
+  // 4. Aset statis (logo, icons, manifest) — cache-first
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

@@ -61,6 +61,12 @@ const WaIcon = () => (
   </svg>
 );
 
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [key, setKey] = useState("");
@@ -70,10 +76,45 @@ export default function LoginPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const pricingRef = useRef<HTMLDivElement>(null);
 
+  // Stats Counters
+  const [counters, setCounters] = useState<{ visitors: number; logins: number } | null>(null);
+  const [vipCount, setVipCount] = useState(0);
+  const [onlineCount, setOnlineCount] = useState(1); // minimal 1 (user sendiri)
+
   // Hero background slideshow
   const [heroBgs, setHeroBgs] = useState<string[]>([]);
   const [heroCurrent, setHeroCurrent] = useState(0);
   const heroTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Fetch Stats Counters & VIP Count
+  useEffect(() => {
+    let baseOnline = 1;
+    fetch(`${API}/api/stats/counters`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.success) {
+          setCounters(json.counters);
+          setVipCount(json.activeVip || 0);
+          const watchers = json.onlineWatchers || 0;
+          baseOnline = watchers > 0 ? watchers : 1;
+          setOnlineCount(baseOnline);
+        }
+      })
+      .catch(() => {});
+
+    // Fluktuasi super halus (+/- 1) jika ada data online watchers real agar terkesan live
+    const interval = setInterval(() => {
+      setOnlineCount((prev) => {
+        if (baseOnline <= 1) return 1; // tetap 1 jika sepi
+        const diff = Math.random() > 0.5 ? 1 : -1;
+        const next = prev + diff;
+        // Jaga agar tidak lari terlalu jauh dari base
+        return Math.max(Math.max(1, baseOnline - 3), Math.min(baseOnline + 3, next));
+      });
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     fetch(`${API}/api/dramabox/trending`)
@@ -180,14 +221,45 @@ export default function LoginPage() {
                 <WaIcon /> Tanya Admin
               </a>
             </div>
-            <div className="lp-hero-stats">
-              {[["1000+","Judul Drama"],["HD","Kualitas Video"],["0","Iklan"],["Multi","Device"]].map(([val, label]) => (
-                <div key={label} className="lp-stat">
-                  <strong>{val}</strong>
-                  <span>{label}</span>
-                </div>
-              ))}
-            </div>
+             <div className="lp-stats-bar">
+               {/* Stat 1: Pengunjung */}
+               <div className="lp-stats-item" title="Total kunjungan halaman">
+                 <div className="lp-stats-icon">
+                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                     <circle cx="12" cy="12" r="3"/>
+                   </svg>
+                 </div>
+                 <div className="lp-stats-info">
+                   <strong>{counters ? formatCount(counters.visitors) : "..."}</strong>
+                   <span>Pengunjung</span>
+                 </div>
+               </div>
+
+               {/* Stat 2: Penonton */}
+               <div className="lp-stats-item" title="Total streaming / login sukses">
+                 <div className="lp-stats-icon">
+                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                     <polygon points="5 3 19 12 5 21 5 3"/>
+                   </svg>
+                 </div>
+                 <div className="lp-stats-info">
+                   <strong>{counters ? formatCount(counters.logins) : "..."}</strong>
+                   <span>Penonton</span>
+                 </div>
+               </div>
+
+               {/* Stat 3: Sedang Nonton */}
+               <div className="lp-stats-item" title="Pengguna aktif streaming saat ini">
+                 <div className="lp-stats-icon" style={{ color: "#22c55e" }}>
+                   <span className="pulsing-dot" style={{ marginRight: 2 }} />
+                 </div>
+                 <div className="lp-stats-info">
+                   <strong style={{ color: "#22c55e" }}>{onlineCount}</strong>
+                   <span>Sedang Nonton</span>
+                 </div>
+               </div>
+             </div>
           </div>
           {/* Poster stack (desktop only) */}
           <div className="lp-hero-deco" aria-hidden>
@@ -332,7 +404,7 @@ export default function LoginPage() {
       {/* ══ FOOTER ══ */}
       <footer className="lp-footer">
         <Image src="/logo.png" alt="Ruang Drama" width={140} height={0} style={{ height: "auto" }} />
-        <p>© {new Date().getFullYear()} Ruang Drama · Streaming Drama China</p>
+        <p suppressHydrationWarning>© {new Date().getFullYear()} Ruang Drama · Streaming Drama China</p>
         <p className="lp-footer-part">Part of <strong>Aurigo Store</strong> &amp; <strong>Ruang Digital</strong></p>
         <a href={`https://wa.me/${WA}`} target="_blank" rel="noopener noreferrer" className="lp-footer-wa">
           💬 Hubungi Admin

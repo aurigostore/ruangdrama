@@ -2,7 +2,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState, useRef, useEffect, Suspense } from "react";
+import { useState, useRef, useEffect, Suspense, useCallback } from "react";
 
 const WA = process.env.NEXT_PUBLIC_WA_NUMBER || "6281234567890";
 
@@ -35,14 +35,12 @@ function formatSisa(info: KeyInfo): { text: string; urgent: boolean; warning: bo
 function NavbarInner() {
   const router = useRouter();
   const [q, setQ] = useState("");
-  const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
   const [keyInfo, setKeyInfo] = useState<KeyInfo | null>(null);
+  const [broadcasts, setBroadcasts] = useState<{ id: number; title: string; body: string; created_at: string }[]>([]);
+  const [lastReadTime, setLastReadTime] = useState<number>(0);
 
-  const menuRef = useRef<HTMLDivElement>(null);
-  const profileRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -60,11 +58,42 @@ function NavbarInner() {
     return () => clearInterval(iv);
   }, []);
 
-  // Tutup semua dropdown saat klik di luar
+  // Fetch broadcast notifications dari backend
+  useEffect(() => {
+    function loadBroadcasts() {
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000"}/api/notifications`)
+        .then((r) => r.json())
+        .then((json) => {
+          if (json.success) setBroadcasts(json.notifications || []);
+        })
+        .catch(() => {});
+    }
+    loadBroadcasts();
+    // Poll broadcast baru setiap 2 menit
+    const iv = setInterval(loadBroadcasts, 120000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Load last read timestamp dari localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("rd_last_read_time");
+      if (saved) setLastReadTime(parseInt(saved));
+    } catch {}
+  }, []);
+
+  const markAsRead = useCallback(() => {
+    if (broadcasts.length === 0) return;
+    const newestTime = Math.max(...broadcasts.map((b) => new Date(b.created_at).getTime()));
+    if (newestTime > lastReadTime) {
+      localStorage.setItem("rd_last_read_time", String(newestTime));
+      setLastReadTime(newestTime);
+    }
+  }, [broadcasts, lastReadTime]);
+
+  // Tutup bell dropdown saat klik di luar
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
       if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
@@ -76,13 +105,10 @@ function NavbarInner() {
     if (q.trim()) {
       router.push(`/search?q=${encodeURIComponent(q.trim())}`);
       setSearchOpen(false);
-      setMenuOpen(false);
     }
   }
 
   function handleLogout() {
-    setMenuOpen(false);
-    setProfileOpen(false);
     if (!confirm("Keluar dari Ruang Drama? Key kamu masih aktif dan bisa dipakai lagi.")) return;
     localStorage.removeItem("rd_key");
     localStorage.removeItem("rd_expires");
@@ -91,8 +117,62 @@ function NavbarInner() {
   }
 
   const sisa = keyInfo ? formatSisa(keyInfo) : null;
-  const showBell = sisa?.warning ?? false;
+  const hasUnreadBroadcast = broadcasts.some((b) => new Date(b.created_at).getTime() > lastReadTime);
+  const showBell = (sisa?.warning ?? false) || hasUnreadBroadcast;
   const waMsg = encodeURIComponent("Halo Admin, saya ingin perpanjang akses Ruang Drama 🙏");
+
+  // Helper untuk me-render isi dropdown lonceng notifikasi secara dinamis
+  const renderBellDropdownContent = () => {
+    const hasWarnings = sisa?.warning;
+    const hasBroadcasts = broadcasts.length > 0;
+
+    if (!hasWarnings && !hasBroadcasts) {
+      return (
+        <>
+          <div className="nb-bell-icon">✅</div>
+          <div className="nb-bell-title">Akses aktif</div>
+          <div className="nb-bell-text">Tidak ada notifikasi saat ini.</div>
+        </>
+      );
+    }
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%" }}>
+        {/* Notifikasi Peringatan VIP */}
+        {hasWarnings && (
+          <div style={{ textAlign: "center", paddingBottom: 10, borderBottom: hasBroadcasts ? "1px solid rgba(255,255,255,0.08)" : "none" }}>
+            <div className="nb-bell-icon">{sisa.urgent ? "⚠️" : "🕐"}</div>
+            <div className="nb-bell-title">Akses hampir habis!</div>
+            <div className="nb-bell-text">
+              Key kamu habis dalam <strong style={{ color: sisa.urgent ? "#e63946" : "#facc15" }}>{sisa.text}</strong>
+            </div>
+            <a href={`https://wa.me/${WA}?text=${waMsg}`} target="_blank" rel="noopener noreferrer"
+              className="nb-bell-btn" onClick={() => setBellOpen(false)}>
+              Perpanjang via WA →
+            </a>
+          </div>
+        )}
+
+        {/* Notifikasi Broadcast Admin */}
+        {hasBroadcasts && (
+          <div className="nb-broadcast-list">
+            <div className="nb-broadcast-header">Pengumuman</div>
+            {broadcasts.map((b) => (
+              <div key={b.id} className="nb-broadcast-item">
+                <div className="nb-broadcast-title">{b.title}</div>
+                <div className="nb-broadcast-body">{b.body}</div>
+                <div className="nb-broadcast-date">
+                  {new Date(b.created_at).toLocaleDateString("id-ID", {
+                    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <nav className="navbar">
@@ -128,7 +208,11 @@ function NavbarInner() {
         <div className="nb-icon-wrap" ref={bellRef}>
           <button
             className="nb-icon-btn"
-            onClick={() => { setBellOpen(!bellOpen); setProfileOpen(false); }}
+            onClick={() => { 
+              const nextState = !bellOpen;
+              setBellOpen(nextState);
+              if (nextState) markAsRead();
+            }}
             aria-label="Notifikasi"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -139,137 +223,53 @@ function NavbarInner() {
           </button>
           {bellOpen && (
             <div className="nb-dropdown nb-bell-dropdown">
-              {sisa?.warning ? (
-                <>
-                  <div className="nb-bell-icon">{sisa.urgent ? "⚠️" : "🕐"}</div>
-                  <div className="nb-bell-title">Akses hampir habis!</div>
-                  <div className="nb-bell-text">
-                    Key kamu habis dalam <strong style={{ color: sisa.urgent ? "#e63946" : "#facc15" }}>{sisa.text}</strong>
-                  </div>
-                  <a href={`https://wa.me/${WA}?text=${waMsg}`} target="_blank" rel="noopener noreferrer"
-                    className="nb-bell-btn" onClick={() => setBellOpen(false)}>
-                    Perpanjang via WA →
-                  </a>
-                </>
-              ) : (
-                <>
-                  <div className="nb-bell-icon">✅</div>
-                  <div className="nb-bell-title">Akses aktif</div>
-                  <div className="nb-bell-text">Tidak ada notifikasi saat ini.</div>
-                </>
-              )}
+              {renderBellDropdownContent()}
             </div>
           )}
         </div>
 
         {/* 👑 Profil VIP */}
-        <div className="nb-icon-wrap" ref={profileRef}>
-          <button
+        <div className="nb-icon-wrap">
+          <Link
+            href="/profile"
             className={`nb-vip-btn${sisa?.warning ? " nb-vip-btn--warn" : ""}`}
-            onClick={() => { setProfileOpen(!profileOpen); setBellOpen(false); }}
             aria-label="Profil VIP"
           >
             <span className="nb-vip-crown">👑</span>
             <span className="nb-vip-label">VIP</span>
-            {showBell && <span className="nb-bullet nb-bullet--vip" />}
-          </button>
-          {profileOpen && keyInfo && (
-            <div className="nb-dropdown nb-profile-dropdown">
-              <div className="nb-profile-header">
-                <div className="nb-profile-crown">👑</div>
-                <div>
-                  <div className="nb-profile-name">{keyInfo.note || "VIP Member"}</div>
-                  <div className="nb-profile-badge">VIP Member</div>
-                </div>
-              </div>
-              <div className="nb-profile-divider" />
-              <div className="nb-profile-rows">
-                <div className="nb-profile-row">
-                  <span className="nb-profile-row-label">📅 Aktif sejak</span>
-                  <span className="nb-profile-row-val">{formatDate(keyInfo.createdAt)}</span>
-                </div>
-                <div className="nb-profile-row">
-                  <span className="nb-profile-row-label">⏳ Expired</span>
-                  <span className="nb-profile-row-val">{formatDate(keyInfo.expiresAt)}</span>
-                </div>
-                <div className="nb-profile-row">
-                  <span className="nb-profile-row-label">⏱ Sisa</span>
-                  <span className="nb-profile-row-val" style={{
-                    color: sisa?.urgent ? "#e63946" : sisa?.warning ? "#facc15" : "#4ade80",
-                    fontWeight: 700,
-                  }}>
-                    {sisa?.text ?? "—"}
-                  </span>
-                </div>
-              </div>
-              <div className="nb-profile-divider" />
-              <a href={`https://wa.me/${WA}?text=${waMsg}`} target="_blank" rel="noopener noreferrer"
-                className="nb-profile-extend" onClick={() => setProfileOpen(false)}>
-                🔄 Perpanjang Akses
-              </a>
-              <button className="nb-profile-logout" onClick={handleLogout}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                  <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-                </svg>
-                Keluar
-              </button>
-            </div>
-          )}
+            {(sisa?.warning ?? false) && <span className="nb-bullet nb-bullet--vip" />}
+          </Link>
         </div>
       </div>
 
-      {/* Mobile: search + kebab */}
+      {/* Mobile: search icon saja — navigasi lain ada di BottomNav */}
       <div className="navbar-mobile-actions">
-        <button className="navbar-icon-btn" onClick={() => { setSearchOpen(!searchOpen); setMenuOpen(false); }} aria-label="Cari">
+        <button className="navbar-icon-btn" onClick={() => { setSearchOpen(!searchOpen); }} aria-label="Cari">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
           </svg>
         </button>
 
-        {/* Mobile kebab (⋮) */}
-        <div className="navbar-kebab-wrap" ref={menuRef}>
-          <button className="navbar-icon-btn" style={{ position: "relative" }}
-            onClick={() => { setMenuOpen(!menuOpen); setSearchOpen(false); }} aria-label="Menu">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="8" r="4"/>
-              <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+        {/* Bell notifikasi di mobile */}
+        <div className="nb-icon-wrap" ref={bellRef}>
+          <button
+            className="nb-icon-btn"
+            onClick={() => { 
+              const nextState = !bellOpen;
+              setBellOpen(nextState); 
+              if (nextState) markAsRead();
+            }}
+            aria-label="Notifikasi"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
             </svg>
             {showBell && <span className="nb-bullet" style={{ top: 2, right: 2 }} />}
           </button>
-
-          {menuOpen && (
-            <div className="navbar-dropdown">
-              {/* Info VIP mini */}
-              {keyInfo && (
-                <div className="nb-mobile-vip">
-                  <span className="nb-vip-crown">👑</span>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: "#fff" }}>{keyInfo.note || "VIP Member"}</div>
-                    <div style={{ fontSize: 11, color: sisa?.urgent ? "#e63946" : sisa?.warning ? "#facc15" : "#4ade80" }}>
-                      Sisa {sisa?.text ?? "—"}
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div className="navbar-dropdown-divider" />
-              <Link href="/watchlist" className="navbar-dropdown-item" onClick={() => setMenuOpen(false)}>
-                <span>❤️</span> Watchlist
-              </Link>
-              {keyInfo && (
-                <a href={`https://wa.me/${WA}?text=${waMsg}`} target="_blank" rel="noopener noreferrer"
-                  className="navbar-dropdown-item" onClick={() => setMenuOpen(false)}>
-                  <span>🔄</span> Perpanjang Akses
-                </a>
-              )}
-              <div className="navbar-dropdown-divider" />
-              <button className="navbar-dropdown-item navbar-dropdown-item--danger" onClick={handleLogout}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                  <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-                </svg>
-                Keluar
-              </button>
+          {bellOpen && (
+            <div className="nb-dropdown nb-bell-dropdown">
+              {renderBellDropdownContent()}
             </div>
           )}
         </div>

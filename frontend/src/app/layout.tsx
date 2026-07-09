@@ -1,9 +1,10 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import PWARegister from "@/components/PWARegister";
 import Navbar from "@/components/Navbar";
 import NavigationProgress from "@/components/NavigationProgress";
 import AuthGuard from "@/components/AuthGuard";
-import PWARegister from "@/components/PWARegister";
+import BottomNav from "@/components/BottomNav";
 
 export const metadata: Metadata = {
   title: { default: "Ruang Drama", template: "%s | Ruang Drama" },
@@ -19,6 +20,9 @@ export const metadata: Metadata = {
     icon: "/favicon.ico",
     apple: "/icons/icon-180.png",
   },
+};
+
+export const viewport: Viewport = {
   themeColor: "#e63946",
 };
 
@@ -41,9 +45,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="page" suppressHydrationWarning>
             {children}
           </div>
-          <footer className="footer">
+          <footer className="footer" suppressHydrationWarning>
             Ruang Drama &copy; {new Date().getFullYear()} — Streaming Drama China
           </footer>
+          <BottomNav />
         </AuthGuard>
       </body>
     </html>

@@ -5,6 +5,7 @@ import express from "express";
 import cors from "cors";
 import dramaboxRouter from "./routes/dramabox.js";
 import authRouter from "./routes/auth.js";
+import { incrementCounter, getCounters, getActiveNotifications, getActiveVipCount, getOnlineWatchersCount } from "./db.js";
 
 // Inisialisasi database saat startup
 import "./db.js";
@@ -12,9 +13,10 @@ import "./db.js";
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+app.set("trust proxy", 1); // Agar IP real user tercatat di balik reverse proxy
 app.use(cors({
   origin: process.env.FRONTEND_URL || "*",
-  methods: ["GET", "POST", "DELETE"],
+  methods: ["GET", "POST", "DELETE", "PATCH"],
 }));
 
 app.use(express.json());
@@ -27,6 +29,27 @@ app.get("/", (req, res) => {
 // Routes
 app.use("/api/dramabox", dramaboxRouter);
 app.use("/api/auth", authRouter);
+
+// ── Public routes (tanpa /api/auth prefix) ─────────────────
+// GET /api/notifications
+app.get("/api/notifications", (req, res) => {
+  const notifs = getActiveNotifications();
+  res.json({ success: true, notifications: notifs });
+});
+
+// POST /api/stats/visitor
+app.post("/api/stats/visitor", (req, res) => {
+  incrementCounter("visitors");
+  res.json({ success: true });
+});
+
+// GET /api/stats/counters
+app.get("/api/stats/counters", (req, res) => {
+  const counters = getCounters();
+  const activeVip = getActiveVipCount();
+  const onlineWatchers = getOnlineWatchersCount();
+  res.json({ success: true, counters, activeVip, onlineWatchers });
+});
 
 // 404 handler
 app.use((req, res) => {
