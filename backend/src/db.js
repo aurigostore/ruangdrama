@@ -17,14 +17,19 @@ const db = new Database(DB_PATH);
 const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='keys'").get();
 
 if (tableExists) {
-  const cols = db.pragma("table_info(keys)").map((c) => c.name);
-  const hasDurationDays = cols.includes("duration_days");
-  const hasDurationHours = cols.includes("duration_hours");
+  let cols = db.pragma("table_info(keys)").map((c) => c.name);
+  let hasDurationDays = cols.includes("duration_days");
+  let hasDurationHours = cols.includes("duration_hours");
 
   if (hasDurationDays && !hasDurationHours) {
     // Kasus 1: tabel lama (hanya duration_days) → tambah duration_hours
     db.exec(`ALTER TABLE keys ADD COLUMN duration_hours INTEGER NOT NULL DEFAULT 24`);
     db.exec(`UPDATE keys SET duration_hours = duration_days * 24`);
+    
+    // Re-evaluate agar if block kedua langsung berjalan tanpa perlu restart kedua kali
+    cols = db.pragma("table_info(keys)").map((c) => c.name);
+    hasDurationDays = cols.includes("duration_days");
+    hasDurationHours = cols.includes("duration_hours");
   }
 
   if (hasDurationDays && hasDurationHours) {
