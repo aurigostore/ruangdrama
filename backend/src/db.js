@@ -87,6 +87,11 @@ db.exec(`
     name  TEXT PRIMARY KEY,
     value INTEGER NOT NULL DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `);
 
 
@@ -248,4 +253,57 @@ export function getOnlineWatchersCount() {
   const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   const row = db.prepare("SELECT COUNT(DISTINCT key) as count FROM key_usage_logs WHERE used_at > ?").get(fifteenMinsAgo);
   return row ? row.count : 0;
+}
+
+// ── Settings ───────────────────────────────────────────────
+export function getSetting(key) {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+  return row ? row.value : null;
+}
+
+export function setSetting(key, value) {
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+}
+
+// ── JWT Token Management ───────────────────────────────────
+export function getJwtToken() {
+  // Prioritas: DB override → fallback .env
+  return getSetting("jwt_token") || process.env.AIO_JWT_TOKEN || "";
+}
+
+export function setJwtToken(token) {
+  setSetting("jwt_token", token);
+}
+
+export function getJwtStatus() {
+  const dbToken = getSetting("jwt_token");
+  const token = dbToken || process.env.AIO_JWT_TOKEN || "";
+  const source = dbToken ? "database" : "env";
+
+  if (!token) return { hasToken: false, source };
+
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return { hasToken: true, error: "Format JWT tidak valid", source };
+
+    const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+    const now = Math.floor(Date.now() / 1000);
+    const isExpired = now > payload.exp;
+    const secLeft = payload.exp - now;
+    const daysLeft = Math.max(0, Math.floor(secLeft / 86400));
+    const hoursLeft = Math.max(0, Math.floor(secLeft / 3600));
+
+    return {
+      hasToken: true,
+      isExpired,
+      role: payload.role || "UNKNOWN",
+      expiresAt: new Date(payload.exp * 1000).toISOString(),
+      createdAt: payload.iat ? new Date(payload.iat * 1000).toISOString() : null,
+      daysLeft,
+      hoursLeft,
+      source,
+    };
+  } catch {
+    return { hasToken: true, error: "Gagal decode JWT", source };
+  }
 }

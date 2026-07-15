@@ -4,6 +4,7 @@ import {
   logKeyUsage, getKeyUsageLogs,
   createNotification, getActiveNotifications, getAllNotifications, deleteNotification, toggleNotification,
   incrementCounter, getCounters, getActiveVipCount, getOnlineWatchersCount,
+  getJwtStatus, setJwtToken,
 } from "../db.js";
 
 const router = Router();
@@ -151,6 +152,61 @@ router.get("/stats/counters", (req, res) => {
   const activeVip = getActiveVipCount();
   const onlineWatchers = getOnlineWatchersCount();
   return res.json({ success: true, counters, activeVip, onlineWatchers });
+});
+
+// ── JWT Token Management (Admin) ────────────────────────────────
+// GET /api/auth/admin/jwt-status
+router.get("/admin/jwt-status", requireAdmin, (req, res) => {
+  const status = getJwtStatus();
+  return res.json({ success: true, ...status });
+});
+
+// POST /api/auth/admin/jwt-update
+router.post("/admin/jwt-update", requireAdmin, (req, res) => {
+  const { jwt } = req.body;
+  if (!jwt || typeof jwt !== "string") {
+    return res.status(400).json({ success: false, error: "JWT token wajib diisi" });
+  }
+
+  const token = jwt.trim();
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return res.status(400).json({ success: false, error: "Format JWT tidak valid (harus 3 bagian dipisah titik)" });
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+  } catch {
+    return res.status(400).json({ success: false, error: "Gagal decode payload JWT — pastikan token lengkap" });
+  }
+
+  if (!payload.exp) {
+    return res.status(400).json({ success: false, error: "JWT tidak memiliki field exp" });
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (now > payload.exp) {
+    return res.status(400).json({ success: false, error: "JWT yang di-paste sudah expired! Ambil token baru dari browser." });
+  }
+
+  // Simpan ke DB — langsung aktif, tanpa restart
+  setJwtToken(token);
+
+  const secLeft = payload.exp - now;
+  const daysLeft = Math.floor(secLeft / 86400);
+  const hoursLeft = Math.floor(secLeft / 3600);
+
+  console.log(`[JWT] Updated via admin panel | Role: ${payload.role} | Exp: ${new Date(payload.exp * 1000).toISOString()} | Sisa: ${daysLeft}h ${hoursLeft % 24}j`);
+
+  return res.json({
+    success: true,
+    message: "JWT berhasil diperbarui dan langsung aktif!",
+    role: payload.role || "UNKNOWN",
+    expiresAt: new Date(payload.exp * 1000).toISOString(),
+    daysLeft,
+    hoursLeft,
+  });
 });
 
 export default router;

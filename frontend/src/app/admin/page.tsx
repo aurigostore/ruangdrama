@@ -37,7 +37,13 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [authed, setAuthed] = useState(false);
   const [authError, setAuthError] = useState("");
-  const [activeTab, setActiveTab] = useState<"keys" | "broadcast">("keys");
+  const [activeTab, setActiveTab] = useState<"keys" | "broadcast" | "jwt">("keys");
+
+  // JWT Token
+  const [jwtStatus, setJwtStatus] = useState<any>(null);
+  const [jwtInput, setJwtInput] = useState("");
+  const [jwtLoading, setJwtLoading] = useState(false);
+  const [jwtMsg, setJwtMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const [keys, setKeys] = useState<KeyRow[]>([]);
 
@@ -88,6 +94,7 @@ export default function AdminPage() {
       setAuthed(true);
       setKeys(json.keys);
       loadNotifications();
+      loadJwtStatus();
     } else {
       setAuthError("Password salah");
     }
@@ -107,6 +114,40 @@ export default function AdminPage() {
     });
     const json = await res.json();
     if (json.success) setNotifications(json.notifications);
+  }
+
+  async function loadJwtStatus() {
+    try {
+      const res = await fetch(`${API}/api/auth/admin/jwt-status`, {
+        headers: { "x-admin-password": password },
+      });
+      const json = await res.json();
+      if (json.success) setJwtStatus(json);
+    } catch {}
+  }
+
+  async function updateJwt() {
+    if (!jwtInput.trim()) return;
+    setJwtLoading(true); setJwtMsg(null);
+    try {
+      const res = await fetch(`${API}/api/auth/admin/jwt-update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-password": password },
+        body: JSON.stringify({ jwt: jwtInput.trim() }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setJwtMsg({ type: "ok", text: `✓ ${json.message} Role: ${json.role} | Sisa: ${json.daysLeft} hari` });
+        setJwtInput("");
+        loadJwtStatus();
+      } else {
+        setJwtMsg({ type: "err", text: `❌ ${json.error}` });
+      }
+    } catch {
+      setJwtMsg({ type: "err", text: "❌ Tidak bisa terhubung ke backend" });
+    } finally {
+      setJwtLoading(false);
+    }
   }
 
   async function generateKey() {
@@ -320,6 +361,13 @@ export default function AdminPage() {
           onClick={() => setActiveTab("broadcast")}
         >
           📢 Broadcast Notifikasi
+        </button>
+        <button
+          className={`admin-nav-btn${activeTab === "jwt" ? " admin-nav-btn--active" : ""}${jwtStatus?.isExpired ? " admin-nav-btn--warn" : ""}`}
+          onClick={() => { setActiveTab("jwt"); loadJwtStatus(); }}
+        >
+          {jwtStatus?.isExpired ? "🔴" : jwtStatus?.daysLeft <= 2 ? "⚠️" : "🔐"} API Token
+          {jwtStatus?.isExpired && <span style={{ marginLeft: 6, fontSize: 11, background: "#e63946", color: "#fff", borderRadius: 4, padding: "1px 5px" }}>EXPIRED</span>}
         </button>
       </div>
 
@@ -610,6 +658,121 @@ export default function AdminPage() {
                 </div>
               </div>
             )}
+          </div>
+        </>
+      )}
+      {activeTab === "jwt" && (
+        <>
+          {/* ── Status Token Saat Ini ── */}
+          <div className="admin-section">
+            <h2>🔐 Status API Token (aiodrama)</h2>
+
+            {!jwtStatus ? (
+              <p style={{ color: "var(--text-3)", fontSize: 13 }}>Memuat status...</p>
+            ) : jwtStatus.error ? (
+              <p className="admin-error">⚠️ {jwtStatus.error}</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {/* Status badge */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{
+                    padding: "4px 12px", borderRadius: 20, fontSize: 13, fontWeight: 700,
+                    background: jwtStatus.isExpired ? "#e63946" : jwtStatus.daysLeft <= 2 ? "#facc15" : "#22c55e",
+                    color: jwtStatus.isExpired ? "#fff" : jwtStatus.daysLeft <= 2 ? "#000" : "#fff",
+                  }}>
+                    {jwtStatus.isExpired ? "🔴 EXPIRED" : jwtStatus.daysLeft <= 2 ? "⚠️ HAMPIR HABIS" : "✅ AKTIF"}
+                  </span>
+                  <span style={{
+                    padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                    background: jwtStatus.role === "VIP" ? "linear-gradient(135deg,#f59e0b,#ef4444)" : "var(--bg-3)",
+                    color: jwtStatus.role === "VIP" ? "#fff" : "var(--text-2)",
+                  }}>
+                    {jwtStatus.role === "VIP" ? "👑 VIP" : `👤 ${jwtStatus.role}`}
+                  </span>
+                  <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+                    Sumber: {jwtStatus.source === "database" ? "🗄️ Database" : "📄 .env"}
+                  </span>
+                </div>
+
+                {/* Info tabel */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div style={{ background: "var(--bg-2)", borderRadius: 8, padding: "10px 14px", border: "1px solid var(--border)" }}>
+                    <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>Sisa Waktu</div>
+                    <div style={{ fontWeight: 700, fontSize: 18, color: jwtStatus.isExpired ? "#e63946" : "var(--text-0)" }}>
+                      {jwtStatus.isExpired ? "Expired" : jwtStatus.daysLeft >= 1 ? `${jwtStatus.daysLeft} hari` : `${jwtStatus.hoursLeft} jam`}
+                    </div>
+                  </div>
+                  <div style={{ background: "var(--bg-2)", borderRadius: 8, padding: "10px 14px", border: "1px solid var(--border)" }}>
+                    <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 4 }}>Kadaluarsa</div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text-1)" }}>
+                      {new Date(jwtStatus.expiresAt).toLocaleDateString("id-ID", {
+                        day: "2-digit", month: "short", year: "numeric",
+                        hour: "2-digit", minute: "2-digit",
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Warning expired */}
+                {jwtStatus.isExpired && (
+                  <div style={{ background: "rgba(230,57,70,0.12)", border: "1px solid rgba(230,57,70,0.4)", borderRadius: 8, padding: "12px 14px", fontSize: 13, color: "#e63946" }}>
+                    ⚠️ <strong>Token expired!</strong> Episode 6+ akan terkunci bagi semua pengguna. Segera update token di bawah.
+                  </div>
+                )}
+                {!jwtStatus.isExpired && jwtStatus.daysLeft <= 2 && (
+                  <div style={{ background: "rgba(250,204,21,0.12)", border: "1px solid rgba(250,204,21,0.4)", borderRadius: 8, padding: "12px 14px", fontSize: 13, color: "#b45309" }}>
+                    ⏰ Token akan expired dalam <strong>{jwtStatus.hoursLeft} jam</strong>. Siapkan token baru sebelum habis.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── Update JWT Token ── */}
+          <div className="admin-section">
+            <h2>🔄 Update JWT Token</h2>
+            <p style={{ fontSize: 13, color: "var(--text-3)", marginBottom: 16 }}>
+              Cara ambil token baru: buka <strong>aiodrama.vip</strong> → login → buka DevTools (F12) →
+              tab Network → reload halaman → cari request ke aiodrama.vip → copy nilai
+              <code style={{ background: "var(--bg-3)", padding: "1px 5px", borderRadius: 3, margin: "0 2px" }}>Authorization: Bearer eyJ...</code>
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <textarea
+                className="admin-input"
+                rows={4}
+                placeholder="Paste token JWT di sini... (eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...)"
+                value={jwtInput}
+                onChange={(e) => { setJwtInput(e.target.value); setJwtMsg(null); }}
+                style={{ fontFamily: "monospace", fontSize: 12, resize: "vertical", lineHeight: 1.5 }}
+              />
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button
+                  className="admin-btn-primary"
+                  onClick={updateJwt}
+                  disabled={jwtLoading || !jwtInput.trim()}
+                  style={{ minWidth: 140 }}
+                >
+                  {jwtLoading ? "Memvalidasi..." : "🔄 Update JWT"}
+                </button>
+                {jwtInput && (
+                  <button className="admin-btn-ghost admin-btn--sm" onClick={() => { setJwtInput(""); setJwtMsg(null); }}>
+                    Bersihkan
+                  </button>
+                )}
+              </div>
+
+              {jwtMsg && (
+                <div style={{
+                  padding: "10px 14px", borderRadius: 8, fontSize: 13,
+                  background: jwtMsg.type === "ok" ? "rgba(34,197,94,0.12)" : "rgba(230,57,70,0.12)",
+                  border: `1px solid ${jwtMsg.type === "ok" ? "rgba(34,197,94,0.4)" : "rgba(230,57,70,0.4)"}`,
+                  color: jwtMsg.type === "ok" ? "#16a34a" : "#e63946",
+                }}>
+                  {jwtMsg.text}
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}

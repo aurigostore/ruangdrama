@@ -1,28 +1,31 @@
 import axios from "axios";
 import { config } from "dotenv";
+import { getJwtToken } from "../db.js";
 config();
 
 // ── Konfigurasi dari .env ──────────────────────────────────
 const PLATFORM = process.env.AIO_PLATFORM || "dramabox";
 const LANG = process.env.AIO_LANG || "id";
 const QUALITY = parseInt(process.env.AIO_QUALITY || "720");
-const JWT_TOKEN = process.env.AIO_JWT_TOKEN || "";
 
 // Base URL — aiodrama.vip (web API)
 const BASE = "https://aiodrama.vip/api/drama";
 // Base URL — api.aiodrama.vip (mobile/app API, lebih lengkap untuk subscriber)
 const BASE_API = "https://api.aiodrama.vip";
 
-console.log("[Scraper] JWT Token:", JWT_TOKEN ? `${JWT_TOKEN.slice(0, 20)}...` : "TIDAK ADA!");
-
-const headers = {
-  "Authorization": `Bearer ${JWT_TOKEN}`,
-  "Content-Type": "application/json",
-  "Accept": "*/*",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-  "Referer": "https://aiodrama.vip/",
-  "Origin": "https://aiodrama.vip",
-};
+// Headers dibuat fresh tiap request agar JWT yang diupdate dari admin panel
+// langsung aktif tanpa perlu restart backend
+function getHeaders() {
+  const token = getJwtToken();
+  return {
+    "Authorization": `Bearer ${token}`,
+    "Content-Type": "application/json",
+    "Accept": "*/*",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+    "Referer": "https://aiodrama.vip/",
+    "Origin": "https://aiodrama.vip",
+  };
+}
 
 // ── Decode base64 video URL ────────────────────────────────
 // aiodrama mengembalikan URL video ter-encode base64 di endpoint aliplay
@@ -57,7 +60,7 @@ function extractFromAliplay(aliplayUrl) {
 async function get(path, params = {}) {
   const url = `${BASE}/${PLATFORM}${path}`;
   const res = await axios.get(url, {
-    headers,
+    headers: getHeaders(),
     params: { lang: LANG, ...params },
     timeout: 15000,
   });
@@ -68,7 +71,7 @@ async function get(path, params = {}) {
 async function post(path, body = {}, params = {}) {
   const url = `${BASE}/${PLATFORM}${path}`;
   const res = await axios.post(url, body, {
-    headers,
+    headers: getHeaders(),
     params: { lang: LANG, ...params },
     timeout: 15000,
   });
@@ -80,7 +83,7 @@ async function post(path, body = {}, params = {}) {
 async function apiGet(path, params = {}) {
   const url = `${BASE_API}${path}`;
   const res = await axios.get(url, {
-    headers,
+    headers: getHeaders(),
     params: { lang: LANG, quality: QUALITY, ...params },
     timeout: 15000,
   });
@@ -90,7 +93,7 @@ async function apiGet(path, params = {}) {
 async function apiPost(path, body = {}) {
   const url = `${BASE_API}${path}`;
   const res = await axios.post(url, body, {
-    headers,
+    headers: getHeaders(),
     params: { lang: LANG },
     timeout: 15000,
   });

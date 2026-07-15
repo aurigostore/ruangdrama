@@ -100,10 +100,18 @@ export default function WatchPage({ params }: Props) {
     ])
       .then(([streamRes, detailRes]) => {
         if (streamRes.success) setStream(streamRes.data);
-        else setError(streamRes.error || "Stream tidak tersedia");
+        else {
+          // Petakan error backend ke pesan yang lebih ramah
+          const rawErr = streamRes.error || "";
+          if (rawErr.toLowerCase().includes("terkunci") || rawErr.toLowerCase().includes("lock")) {
+            setError("Episode ini terkunci dan memerlukan akses khusus.");
+          } else {
+            setError("Video tidak tersedia dari sumber (DramaBox). Coba drama lain atau coba lagi nanti.");
+          }
+        }
         if (detailRes.success) setDetail(detailRes.data);
       })
-      .catch(() => setError("Gagal memuat video"))
+      .catch(() => setError("Gagal terhubung ke server. Periksa koneksi internet kamu."))
       .finally(() => setLoading(false));
   }, [id, ep]);
 
@@ -128,8 +136,13 @@ export default function WatchPage({ params }: Props) {
       }
     };
 
+    const ERR_MSG = "Video tidak tersedia dari sumber (DramaBox). Coba drama lain atau coba lagi nanti.";
+
     const isHLS = url.includes(".m3u8");
     if (!isHLS) {
+      // Handler error untuk MP4 — tangkap 403/404 dari CDN
+      const onVideoError = () => setError(ERR_MSG);
+      video.addEventListener("error", onVideoError, { once: true });
       video.src = url;
       video.load();
       tryPlay();
@@ -138,6 +151,8 @@ export default function WatchPage({ params }: Props) {
 
     // iOS Safari — native HLS support
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      const onVideoError = () => setError(ERR_MSG);
+      video.addEventListener("error", onVideoError, { once: true });
       video.src = url;
       video.load();
       tryPlay();
@@ -166,13 +181,15 @@ export default function WatchPage({ params }: Props) {
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              hls.startLoad(); // retry network error
+              // Network error fatal = URL tidak bisa diakses (403, 404, expired)
+              setError(ERR_MSG);
+              hls.destroy();
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
               hls.recoverMediaError();
               break;
             default:
-              setError("Gagal memuat video stream. Coba refresh halaman.");
+              setError(ERR_MSG);
               hls.destroy();
           }
         }
@@ -371,7 +388,14 @@ export default function WatchPage({ params }: Props) {
                 <circle cx="12" cy="12" r="10" />
                 <line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
               </svg>
-              <h3>{error}</h3>
+              <h3 style={{ textAlign: "center", margin: "0 0 6px" }}>
+                {error.includes("terkunci") ? "Episode Terkunci" :
+                 error.includes("server") ? "Koneksi Gagal" :
+                 "Video Tidak Tersedia"}
+              </h3>
+              <p style={{ textAlign: "center", fontSize: 13, color: "var(--text-3)", margin: 0, maxWidth: 280 }}>
+                {error}
+              </p>
             </div>
           )}
 
